@@ -39,12 +39,14 @@ const Interpreter = () => {
     let bot = Interface($scope);
     let interpreter = {};
     let onFinish;
+    let isPaused = false;
 
     $scope.observer.register('REVERT', watchName =>
         revert(watchName === 'before' ? $scope.beforeState : $scope.duringState)
     );
 
     function init() {
+        isPaused = false;
         $scope = createScope();
         bot = Interface($scope);
         interpreter = {};
@@ -58,6 +60,7 @@ const Interpreter = () => {
     }
 
     function loop() {
+        if (isPaused && !$scope.stopped) return;
         if ($scope.stopped || !interpreter.run()) {
             onFinish(interpreter.pseudoToNative(interpreter.value));
         }
@@ -159,6 +162,20 @@ const Interpreter = () => {
         js_interpreter.setProperty(scope, 'sleep', createAsync(js_interpreter, sleep));
     }
 
+    function pause() {
+        if (!$scope.stopped) isPaused = true;
+    }
+
+    function resume() {
+        if (!isPaused || $scope.stopped) return;
+        isPaused = false;
+        try {
+            loop();
+        } catch (error) {
+            $scope.observer.emit('Error', error.error || error);
+        }
+    }
+
     async function stop() {
         return new Promise((resolve, reject) => {
             try {
@@ -202,6 +219,7 @@ const Interpreter = () => {
     async function terminateSession() {
         return new Promise((resolve, reject) => {
             try {
+                isPaused = false;
                 $scope.stopped = true;
                 $scope.is_error_triggered = false;
                 globalObserver.emit('bot.stop');
@@ -277,7 +295,7 @@ const Interpreter = () => {
         });
     }
 
-    return { stop, run, terminateSession, bot, unsubscribeFromTicksService };
+    return { stop, pause, resume, run, terminateSession, bot, unsubscribeFromTicksService };
 };
 export default Interpreter;
 

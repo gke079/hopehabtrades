@@ -169,3 +169,16 @@
 .animation--disabled {
     opacity: 0.32;
 }
+
+
+.animation__end-session {
+    padding: 4px 8px !important;
+    font-size: 11px !important;
+    height: 40px;
+    border-radius: 0 !important;
+}
+.animation__paused-note {
+    display: block;
+    font-size: 10px;
+    font-weight: normal;
+}

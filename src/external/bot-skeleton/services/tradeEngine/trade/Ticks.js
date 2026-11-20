@@ -28,6 +28,7 @@ export default Engine =>
                     }
                     const lastTick = ticks.slice(-1)[0];
                     const { epoch } = lastTick;
+                    if (this.entrySpacing && !this.entrySpacing.allowsTick(epoch)) return;
                     this.store.dispatch({ type: constants.NEW_TICK, payload: epoch });
                 };
 

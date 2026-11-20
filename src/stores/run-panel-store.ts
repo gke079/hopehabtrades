@@ -1,4 +1,5 @@
 // @ts-nocheck — vendored bot code with known upstream type gaps; see AGENTS.md
+import { getTradingMode, setTradingMode, TradingMode } from '@/utils/trading-mode';
 import { action, computed, makeObservable, observable, reaction, runInAction } from 'mobx';
 import { botNotification } from '@/components/bot-notification/bot-notification';
 import { notification_message } from '@/components/bot-notification/bot-notification-utils';
@@ -26,6 +27,13 @@ export type TContractState = {
 };
 
 export default class RunPanelStore {
+    is_paused = false;
+    trading_mode: TradingMode = getTradingMode();
+    setTradingMode = (mode: TradingMode) => {
+        if (this.is_running) return;
+        this.trading_mode = mode;
+        setTradingMode(mode);
+    };
     root_store: RootStore;
     dbot: TDbot;
     core: TStores;
@@ -34,6 +42,11 @@ export default class RunPanelStore {
 
     constructor(root_store: RootStore, core: TStores) {
         makeObservable(this, {
+            is_paused: observable,
+            onResumeBotClick: action,
+            onStopBotClick: action,
+            trading_mode: observable,
+            setTradingMode: action,
             active_index: observable,
             contract_stage: observable,
             dialog_options: observable,
@@ -120,7 +133,7 @@ export default class RunPanelStore {
     error_type: ErrorTypes | undefined = undefined;
 
     get is_stop_button_visible() {
-        return this.is_running || this.has_open_contract;
+        return this.is_running || this.has_open_contract || this.is_paused;
     }
 
     get is_stop_button_disabled() {
@@ -137,6 +150,7 @@ export default class RunPanelStore {
 
         return (
             this.is_running ||
+            this.is_paused ||
             this.has_open_contract ||
             (journal.unfiltered_messages.length === 0 && transactions?.transactions?.length === 0)
         );
@@ -161,6 +175,7 @@ export default class RunPanelStore {
     };
 
     onRunButtonClick = async () => {
+        if (this.is_paused) { this.onResumeBotClick(); return; }
         let timer_counter = 1;
         if (window.sendRequestsStatistic) {
             performance.clearMeasures();
@@ -229,21 +244,21 @@ export default class RunPanelStore {
     };
 
     onStopBotClick = () => {
-        this.is_contract_buying_in_progress = false;
+        if (this.is_paused || !this.dbot?.interpreter?.pause) return;
+        this.dbot.interpreter.pause();
+        this.is_paused = true;
+        this.setIsRunning(true);
+    };
 
-        const { is_multiplier } = this.root_store.summary_card;
-        const { summary_card } = this.root_store;
-
-        if (is_multiplier) {
-            this.showStopMultiplierContractDialog();
-        } else {
-            this.stopBot();
-            summary_card.clear();
-            this.setShowBotStopMessage(true);
-        }
+    onResumeBotClick = () => {
+        if (!this.is_paused || !this.dbot?.interpreter?.resume) return;
+        this.is_paused = false;
+        this.setIsRunning(true);
+        this.dbot.interpreter.resume();
     };
 
     stopBot = () => {
+        this.is_paused = false;
         const { ui } = this.core;
 
         this.dbot.stopBot();
@@ -526,6 +541,7 @@ export default class RunPanelStore {
     };
 
     onBotStopEvent = () => {
+        this.is_paused = false;
         const { summary_card } = this.root_store;
         const { ui } = this.core;
         const indicateBotStopped = () => {
@@ -573,7 +589,7 @@ export default class RunPanelStore {
     };
 
     onBotReadyEvent = () => {
-        this.setIsRunning(false);
+        if (!this.is_paused) this.setIsRunning(false);
         observer.unregisterAll('bot.bot_ready');
     };
 

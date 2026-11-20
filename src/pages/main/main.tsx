@@ -1,4 +1,5 @@
 // @ts-nocheck — vendored bot code with known upstream type gaps; see AGENTS.md
+import FreeBots from '../free-bots/free-bots';
 import React, { lazy, Suspense, useEffect, useState } from 'react';
 import classNames from 'classnames';
 import { observer } from 'mobx-react-lite';
@@ -45,6 +46,9 @@ import RunStrategy from '../dashboard/run-strategy';
 import './main.scss';
 
 const ChartWrapper = lazy(() => import('../chart/chart-wrapper'));
+const Analysis = lazy(() => import('../analysis/analysis'));
+const HopeLogic = lazy(() => import('../hopelogic/hopelogic'));
+const Signal = lazy(() => import('../analysis/signal'));
 const Tutorial = lazy(() => import('../tutorials'));
 
 const AppWrapper = observer(() => {
@@ -78,7 +82,7 @@ const AppWrapper = observer(() => {
     const { clear } = summary_card;
     const { DASHBOARD, BOT_BUILDER } = DBOT_TABS;
     const init_render = React.useRef(true);
-    const hash = ['dashboard', 'bot_builder', 'chart', 'tutorial'];
+    const hash = ['dashboard', 'bot_builder', 'chart', 'tutorial', 'free_bots', 'analysis', 'signal', 'hopelogic'];
     const { isDesktop } = useDevice();
     const location = useLocation();
     const navigate = useNavigate();
@@ -451,6 +455,18 @@ const AppWrapper = observer(() => {
                                         <Tutorial handleTabChange={handleTabChange} />
                                     </Suspense>
                                 </div>
+                            </div>
+                            <div label='Free Bots' id='id-free-bots'>
+                                <FreeBots />
+                            </div>
+                            <div label='Analysis' id='id-analysis'>
+                                <Suspense fallback={<ChunkLoader message='Loading analysis…' />}><Analysis /></Suspense>
+                            </div>
+                            <div label='Signal' id='id-signal'>
+                                <Suspense fallback={<ChunkLoader message='Loading signals…' />}><Signal /></Suspense>
+                            </div>
+                            <div label='HopeLogic' id='id-hopelogic'>
+                                <Suspense fallback={<ChunkLoader message='Loading HopeLogic…' />}><HopeLogic /></Suspense>
                             </div>
                         </Tabs>
                         {!isDesktop && right_tab_shadow && <span className='tabs-shadow tabs-shadow--right' />}{' '}

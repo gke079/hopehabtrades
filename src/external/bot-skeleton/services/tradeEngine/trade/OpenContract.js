@@ -22,6 +22,7 @@ export default Engine =>
                     broadcastContract({ accountID: api_base.account_info.loginid, ...contract });
 
                     if (this.isSold) {
+                        this.entrySpacing?.onSettlement();
                         this.contractId = '';
                         clearTimeout(this.transaction_recovery_timeout);
                         this.updateTotals(contract);

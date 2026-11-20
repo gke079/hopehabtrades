@@ -26,7 +26,7 @@ export default defineConfig({
     pluginReact(),
   ],
   source: {
-    entry: { index: './src/main.tsx' },
+    entry: { index: './src/main.tsx', hopelogic: './src/pages/hopelogic/tool/main.tsx' },
     define: {
       'process.env': {
         // Deriv app id — drives OAuth login/sign-up and WebSocket connections. The
@@ -91,12 +91,15 @@ export default defineConfig({
       { from: path.join(__dirname, 'public') },
     ],
   },
-  html: { template: './index.html' },
+  html: { template: ({ entryName }) => entryName === 'hopelogic' ? './src/pages/hopelogic/tool/index.html' : './index.html' },
   server: {
     compress: true,
   },
   dev: { hmr: true },
   tools: {
+    postcss: (_config, { addPlugins }) => {
+      addPlugins(require('@tailwindcss/postcss')());
+    },
     rspack(config, { appendPlugins, appendRules }) {
       // @deriv-com/quill-ui@1.x vendors a React 18 jsx-runtime that reads
       // React.__SECRET_INTERNALS_…ReactCurrentOwner (removed in React 19). Remap

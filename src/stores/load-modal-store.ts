@@ -290,7 +290,12 @@ export default class LoadModalStore {
 
     loadStrategyToBuilder = async (strategy: TStrategy, is_show_notification: boolean = true) => {
         if (strategy?.id) {
-            await load({
+            const deadline = Date.now() + 15000;
+            while (!window.Blockly?.derivWorkspace || this.root_store.blockly_store.is_loading) {
+                if (Date.now() >= deadline) throw new Error('Bot Builder is taking too long to initialize. Please try loading the bot again.');
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+            const result = await load({
                 block_string: strategy.xml,
                 strategy_id: strategy.id,
                 file_name: strategy.name,
@@ -300,6 +305,7 @@ export default class LoadModalStore {
                 showIncompatibleStrategyDialog: false,
                 show_snackbar: is_show_notification,
             });
+            if (result?.error) throw new Error(result.error);
             window.Blockly.derivWorkspace.strategy_to_load = strategy.xml;
         }
     };

@@ -28,7 +28,7 @@ const TradeAnimation = observer(({ className, should_show_overlay }: TTradeAnima
     const { isMobile } = useDevice();
 
     const { is_contract_completed, profit } = summary_card;
-    const { contract_stage, is_stop_button_visible, is_stop_button_disabled, onRunButtonClick, onStopBotClick } =
+    const { contract_stage, is_stop_button_visible, onRunButtonClick, onStopBotClick } =
         run_panel;
     const [shouldDisable, setShouldDisable] = React.useState(false);
     const is_unavailable_for_payment_agent = false;
@@ -114,7 +114,15 @@ const TradeAnimation = observer(({ className, should_show_overlay }: TTradeAnima
     const should_show_tooltip = !is_stop_button_visible && !is_bot_builder_tab && has_no_bots;
 
     const button_props = React.useMemo(() => {
-        if (is_stop_button_visible && !is_stop_button_disabled) {
+        if (run_panel.is_paused) {
+            return {
+                id: 'db-animation__resume-button',
+                class: 'animation__run-button',
+                text: <Localize i18n_default_text='Resume' />,
+                icon: <LabelPairedPlayLgFillIcon fill='#fff' />,
+            };
+        }
+        if (is_stop_button_visible) {
             return {
                 id: 'db-animation__stop-button',
                 class: 'animation__stop-button',
@@ -128,7 +136,7 @@ const TradeAnimation = observer(({ className, should_show_overlay }: TTradeAnima
             text: <Localize i18n_default_text='Run' />,
             icon: <LabelPairedPlayLgFillIcon fill='#fff' />,
         };
-    }, [is_stop_button_visible, is_stop_button_disabled]);
+    }, [is_stop_button_visible, run_panel.is_paused]);
     const show_overlay = should_show_overlay && is_contract_completed;
 
     // Fix TypeScript error by ensuring active_tab is a number
@@ -194,16 +202,20 @@ const TradeAnimation = observer(({ className, should_show_overlay }: TTradeAnima
                 </div>
             ) : (
                 <Button
-                    is_disabled={(is_disabled && !is_unavailable_for_payment_agent) || contract_stage === 3}
+                    is_disabled={is_stop_button_visible ? contract_stage === contract_stages.IS_STOPPING : is_disabled && !is_unavailable_for_payment_agent}
                     className={button_props.class}
                     id={button_props.id}
                     icon={button_props.icon}
                     onClick={() => {
-                        setShouldDisable(true);
+                        if (run_panel.is_paused) {
+                            run_panel.onResumeBotClick();
+                            return;
+                        }
                         if (is_stop_button_visible) {
                             onStopBotClick();
                             return;
                         }
+                        setShouldDisable(true);
                         onRunButtonClick();
                         /* [AI] - Analytics event tracking removed - see migrate-docs/MONITORING_PACKAGES.md for re-implementation guide */
                         /* [/AI] */
@@ -216,6 +228,9 @@ const TradeAnimation = observer(({ className, should_show_overlay }: TTradeAnima
                     {button_props.text}
                 </Button>
             )}
+            {run_panel.is_paused && <Button className='animation__end-session' onClick={run_panel.onStopButtonClick} secondary>
+                <Localize i18n_default_text='End session' />
+            </Button>}
             <div
                 className={classNames('animation__container', className, {
                     'animation--running': contract_stage > 0,
@@ -225,7 +240,7 @@ const TradeAnimation = observer(({ className, should_show_overlay }: TTradeAnima
             >
                 {show_overlay && <ContractResultOverlay profit={profit} />}
                 <span className='animation__text'>
-                    <ContractStageText contract_stage={contract_stage} />
+                    {run_panel.is_paused ? <span><Localize i18n_default_text='Stopped — resume to continue' /><small className='animation__paused-note'>Existing contracts remain active.</small></span> : <ContractStageText contract_stage={contract_stage} />}
                 </span>
                 <div className='animation__progress'>
                     <div className='animation__progress-line'>

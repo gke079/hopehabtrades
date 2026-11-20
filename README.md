@@ -117,3 +117,23 @@ not Next.js config:
 
 When assembled by the App Builder, these are configured for you (logo upload, color,
 font, and app name are injected at deploy time).
+
+### Free Bots
+
+The Free Bots tab lists shared, administrator-published Blockly XML strategies. Users can load a copy into Bot Builder; editing or deleting a library entry does not change existing user copies. Stop a running bot before loading another strategy. The library uses Netlify Database; its migration is applied automatically during deployment.
+
+Management controls support publishing XML files under 2 MB, changing names and descriptions, replacing XML, and deleting entries with confirmation. The app stays public. A separate Netlify Identity email/password login in Free Bots protects management. The server validates the Identity session and requires the server-controlled `admin` role; ordinary accounts and user-editable profile roles grant no access.
+
+To provision the first administrator, open Identity in the Netlify project dashboard, invite the administrator by email, then open that Identity user and add the `admin` role. The invitation link opens the app and prompts the administrator to set a password. After signing in under Free Bots, administrators can publish and manage bots without code changes. Password recovery is available in the same sign-in form. No admin credentials are embedded in the application.
+
+### Analysis and Signal tabs
+
+Analysis connects to Deriv's public market-data feed independently of the trading connection. Choose a volatility index and a rolling window of 100, 500, or 1,000 ticks. Digit circles show frequency percentages and counts; selecting a circle sets the Over/Under barrier. Equal-to-barrier digits are reported separately. Green, blue, red, and yellow arcs identify the most, second most, least, and second least appearing digits. Ties use digit order, and equal distributions have no rank highlights. A red pointer follows the latest tick's digit. Quote precision comes from the feed so trailing zeroes are retained. Connections close when leaving Analysis and reconnect automatically after interruptions.
+
+Signal has a dedicated tab with an empty state. No signal rules or automatic trading actions are configured there.
+
+### Loading published bots and stopping a session
+
+Select a bot's name or its Load bot button in Free Bots to import it and open the Workspace in Bot Builder. Imports wait for Blockly initialization; invalid or unsupported XML leaves an error in the library instead of opening an empty workspace.
+
+Run changes to Stop while a strategy is executing. Stop suspends strategy execution, and Resume continues the same interpreter with its variables and session state intact. Requests already sent and existing contracts continue normally. End session finishes the stopped session through the existing shutdown flow; end the session before importing another bot.
