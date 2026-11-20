@@ -1,3 +1,4 @@
+import { EntrySpacing, getTradingMode } from '@/utils/trading-mode';
 import { applyMiddleware, createStore } from 'redux';
 import { thunk } from 'redux-thunk';
 import { getLocalizedErrorMessage } from '@/constants/backend-error-messages';
@@ -81,6 +82,7 @@ export default class TradeEngine extends Balance(Purchase(Sell(OpenContract(Prop
         const [token, options] = expectInitArg(args);
         const { symbol } = options;
 
+        this.entrySpacing = new EntrySpacing(getTradingMode());
         this.initArgs = args;
         this.options = options;
         this.startPromise = this.loginAndGetBalance(token);

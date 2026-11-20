@@ -3,9 +3,12 @@
   publish = "dist"
 
 [build.environment]
-  NODE_VERSION = "22"
+  NODE_VERSION = "24"
+
+[server]
+  path = "/api/*"
 
 [[redirects]]
-  from = "/*"
+  from = "/preview"
   to = "/index.html"
   status = 200

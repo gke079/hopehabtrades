@@ -1,3 +1,4 @@
+import { hasAdminCallback, processAdminCallback } from '@/utils/admin-auth-callback';
 import { lazy, Suspense } from 'react';
 import React from 'react';
 import { createBrowserRouter, createRoutesFromElements, Route, RouterProvider } from 'react-router';
@@ -72,6 +73,15 @@ const router = createBrowserRouter(
  * 3. Router provider setup
  */
 function App() {
+    const [authReady, setAuthReady] = React.useState(() => !hasAdminCallback());
+    const [authError, setAuthError] = React.useState(false);
+    React.useEffect(() => {
+        if (authReady) return;
+        processAdminCallback().catch(() => setAuthError(true)).finally(async () => {
+            await router.navigate({ hash: '#free_bots' }, { replace: true });
+            setAuthReady(true);
+        });
+    }, []);
     // Handle account switching via URL parameter
     useAccountSwitching();
 
@@ -113,7 +123,8 @@ function App() {
         handleCallback();
     }, []);
 
-    return <RouterProvider router={router} />;
+    if (!authReady) return <p role='status'>Processing admin invitation…</p>;
+    return <>{authError && <p role='alert'>This admin link is invalid or has expired. Request a new invitation or password reset link.</p>}<RouterProvider router={router} /></>;
 }
 
 export default App;
