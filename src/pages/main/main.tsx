@@ -49,6 +49,7 @@ const ChartWrapper = lazy(() => import('../chart/chart-wrapper'));
 const Analysis = lazy(() => import('../analysis/analysis'));
 const HopeLogic = lazy(() => import('../hopelogic/hopelogic'));
 const Signal = lazy(() => import('../analysis/signal'));
+const StrategyBot = lazy(() => import('../analysis/strategy-bot'));
 const Tutorial = lazy(() => import('../tutorials'));
 
 const AppWrapper = observer(() => {
@@ -82,7 +83,7 @@ const AppWrapper = observer(() => {
     const { clear } = summary_card;
     const { DASHBOARD, BOT_BUILDER } = DBOT_TABS;
     const init_render = React.useRef(true);
-    const hash = ['dashboard', 'bot_builder', 'chart', 'tutorial', 'free_bots', 'analysis', 'signal', 'hopelogic'];
+    const hash = ['dashboard', 'bot_builder', 'chart', 'tutorial', 'free_bots', 'analysis', 'signal', 'strategy_bot', 'hopelogic'];
     const { isDesktop } = useDevice();
     const location = useLocation();
     const navigate = useNavigate();
@@ -464,6 +465,9 @@ const AppWrapper = observer(() => {
                             </div>
                             <div label='Signal' id='id-signal'>
                                 <Suspense fallback={<ChunkLoader message='Loading signals…' />}><Signal /></Suspense>
+                            </div>
+                            <div label='Strategy Bot' id='id-strategy-bot'>
+                                <Suspense fallback={<ChunkLoader message='Loading Strategy Bot…' />}><StrategyBot /></Suspense>
                             </div>
                             <div label='HopeLogic' id='id-hopelogic'>
                                 <Suspense fallback={<ChunkLoader message='Loading HopeLogic…' />}><HopeLogic /></Suspense>

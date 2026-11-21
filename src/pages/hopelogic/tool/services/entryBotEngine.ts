@@ -29,11 +29,11 @@ export class EntryBotExecutor {
     sessionProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   };
   private sessionProfit: number = 0;
   private lastStopReason: string = '';
-  private balance: number = 10000;
+  private balance: number = 0;
   private isRunning: boolean = false;
   private isPaused: boolean = false;
 
@@ -47,10 +47,10 @@ export class EntryBotExecutor {
   private livePendingContract: ActiveContract | null = null;
   private lastSeenTick: Tick | null = null;
 
-  constructor(config: EntryBotConfig, initialBalance: number = 10000) {
+  constructor(config: EntryBotConfig, initialBalance: number = 0) {
     this.config = { ...config };
     this.currentStake = Math.max(0.35, Number(config.initialStake) || 0.35);
-    const safeBalance = initialBalance > 0 ? initialBalance : 10000;
+    const safeBalance = Math.max(0, initialBalance);
     this.balance = safeBalance;
     this.metrics.peakBalance = safeBalance;
   }
@@ -83,7 +83,7 @@ export class EntryBotExecutor {
 
   public setBalance(newBalance: number) {
     if (newBalance <= 0 && this.isRunning) return;
-    const safeBalance = newBalance > 0 ? newBalance : this.balance > 0 ? this.balance : 10000;
+    const safeBalance = newBalance > 0 ? newBalance : this.balance;
     this.balance = safeBalance;
     this.metrics.peakBalance = Math.max(this.metrics.peakBalance, safeBalance);
   }
@@ -141,10 +141,6 @@ export class EntryBotExecutor {
   }
 
   public start() {
-    if (this.balance <= 0) {
-      this.balance = 10000;
-      this.metrics.peakBalance = Math.max(this.metrics.peakBalance, 10000);
-    }
     this.isRunning = true;
     this.isPaused = false;
     this.activeContract = null;
@@ -409,14 +405,13 @@ export class EntryBotExecutor {
     if (!this.isRunning || this.isPaused) return;
     if (this.checkTpSlAndStop()) return;
 
-    if (this.balance <= 0 && this.metrics.totalTrades === 0) {
-      this.balance = 10000;
-      this.metrics.peakBalance = Math.max(this.metrics.peakBalance, 10000);
-    }
-
     const desiredStake = Math.max(0.35, Number(this.currentStake || this.config.initialStake || 0.35));
     if (this.balance < 0.35) {
-      this.stop('Insufficient balance to place stake');
+      this.stop(
+        this.liveTrade?.isReady()
+          ? 'Insufficient balance to place stake'
+          : 'Live trading is not connected. Log in on the main site with your Deriv account to trade.'
+      );
       return;
     }
     const stakeToUse = Number(Math.min(this.balance, desiredStake).toFixed(2));
@@ -466,6 +461,8 @@ export class EntryBotExecutor {
       void this.executeLiveContract(this.activeContract, this.config.marketId);
       return;
     }
+    // Simulation removed: trades only go to the connected Deriv account.
+    this.stop('Live trading is not connected. Log in on the main site with your Deriv account to trade.');
   }
 
   private executeLiveContract(contract: ActiveContract, marketId: string) {
@@ -641,7 +638,7 @@ export class EntryBotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: 'entry',
-      mode: realProfit !== undefined ? 'live' : 'simulation',
+      mode: 'live',
     };
 
     this.trades.unshift(tradeRecord);

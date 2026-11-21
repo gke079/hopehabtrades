@@ -57,6 +57,11 @@ export default function App() {
   const signalsOnly =
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('view') === 'signals';
+  // Strategy-only embed mode: when opened with ?view=strategy the tool renders the
+  // Strategy Bot panel alone (used by the main site's Strategy Bot tab).
+  const strategyOnly =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('view') === 'strategy';
   const [selectedMarket, setSelectedMarket] = useState<Market>(DEFAULT_MARKET);
   const [ticksWindow, setTicksWindow] = useState<number>(1000);
   const [ticks, setTicks] = useState<Tick[]>([]);
@@ -87,7 +92,7 @@ export default function App() {
   };
 
   // Tabs & Modals
-  const [activeTab, setActiveTab] = useState<ActiveTab>(signalsOnly ? 'signals' : 'digits');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(signalsOnly ? 'signals' : strategyOnly ? 'bots' : 'digits');
   const [isApiModalOpen, setIsApiModalOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
@@ -102,16 +107,15 @@ export default function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed.isLoggedIn) {
-          const safeBalance = parsed.balance && parsed.balance > 0 ? parsed.balance : 10000.0;
-          return { ...parsed, balance: safeBalance };
+          return { ...parsed, balance: parsed.balance && parsed.balance > 0 ? parsed.balance : 0 };
         }
       }
     } catch {}
     return {
-      isLoggedIn: true,
-      username: 'Demo Trader',
-      email: 'demo@deriv.com',
-      balance: 10000.0,
+      isLoggedIn: false,
+      username: '',
+      email: '',
+      balance: 0,
       currency: 'USD',
       isDemo: true,
     };
@@ -198,7 +202,7 @@ export default function App() {
     totalProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   });
 
   // ==========================================
@@ -268,13 +272,13 @@ export default function App() {
     totalProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   });
 
   // ==========================================
   // 3. NORMAL BOT (DIRECT CONTINUOUS EXECUTION)
   // ==========================================
-  const [botsTabSubView, setBotsTabSubView] = useState<BotSubTab>('normal');
+  const [botsTabSubView, setBotsTabSubView] = useState<BotSubTab>(strategyOnly ? 'strategy' : 'normal');
   const [floatingBotSelection, setFloatingBotSelection] = useState<BotSubTab>('normal');
   const [normalBotConfig, setNormalBotConfig] = useState<NormalBotConfig>(() => {
     try {
@@ -342,7 +346,7 @@ export default function App() {
     totalProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   });
   const [normalBotStake, setNormalBotStake] = useState<number>(normalBotConfig.stake);
   const [normalBotStep, setNormalBotStep] = useState<number>(0);
@@ -402,7 +406,7 @@ export default function App() {
     totalProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   });
 
   // ==========================================
@@ -454,7 +458,7 @@ export default function App() {
     totalProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   });
 
   // ==========================================
@@ -484,21 +488,19 @@ export default function App() {
     totalProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   });
 
   // Active Signal session running on Normal Bot (strictly scoped by category)
   const [activeSignal, setActiveSignal] = useState<ActiveSignalSession | null>(null);
 
-  // Live trading (real Deriv account via the site connection) vs simulation
+  // Live trading (real Deriv account via the site connection) — simulation removed
   const [liveTrade] = useState(() => new LiveTradeService());
   const [liveAccounts, setLiveAccounts] = useState<LiveAccountInfo[]>([]);
   const [activeLiveAccount, setActiveLiveAccount] = useState<LiveAccountInfo | null>(null);
   const [liveTradingEnabled, setLiveTradingEnabled] = useState<boolean>(false);
   const liveTradingEnabledRef = useRef(false);
   liveTradingEnabledRef.current = liveTradingEnabled;
-  // null = follow account availability automatically; true/false = user's explicit choice
-  const liveModeUserPreference = useRef<boolean | null>(null);
 
   // Unified trades history
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -563,12 +565,9 @@ export default function App() {
     const unsubLiveAccounts = liveTrade.onAccounts((account, accounts) => {
       setLiveAccounts(accounts);
       setActiveLiveAccount(account);
-      // Trading defaults to the site's authorized Deriv account (real or demo)
-      // as soon as one is available — simulation is only the fallback when the
-      // visitor is not logged in, or after they explicitly pick simulation.
-      const wantsLive = liveModeUserPreference.current !== null
-        ? liveModeUserPreference.current
-        : Boolean(account);
+      // Trading always goes to the site's authorized Deriv account (real or
+      // demo) as soon as one is available — there is no simulation fallback.
+      const wantsLive = Boolean(account);
       if (liveTradingEnabledRef.current !== wantsLive) {
         liveTrade.setEnabled(wantsLive);
         setLiveTradingEnabled(wantsLive);
@@ -1437,35 +1436,9 @@ export default function App() {
     normalBotExecutorRef.current.start();
   };
 
-  // Reset user balance (updates all executors)
-  const handleResetUserBalance = (amount: number) => {
-    setUserAccount((prev) => ({ ...prev, balance: amount }));
-    syncAllExecutorsBalance(amount);
-  };
-
   // ==========================================
-  // LIVE TRADING (REAL DERIV ACCOUNT) vs SIMULATION
+  // LIVE TRADING (REAL DERIV ACCOUNT) — simulation removed
   // ==========================================
-  const handleToggleLiveTrading = () => {
-    if (liveTradingEnabled) {
-      liveModeUserPreference.current = false;
-      liveTrade.setEnabled(false);
-      setLiveTradingEnabled(false);
-      return;
-    }
-    if (!activeLiveAccount) return;
-    const targetIsReal = !activeLiveAccount.isVirtual;
-    const confirmed =
-      !targetIsReal ||
-      window.confirm(
-        `Enable LIVE trading on your REAL account ${activeLiveAccount.loginid} (${activeLiveAccount.currency} ${activeLiveAccount.balance.toFixed(2)})?\n\nBots will place real contracts with real money using your account settings. Continue?`
-      );
-    if (!confirmed) return;
-    liveModeUserPreference.current = true;
-    liveTrade.setEnabled(true);
-    setLiveTradingEnabled(true);
-  };
-
   const handleSwitchLiveAccount = (loginid: string) => {
     void liveTrade.switchAccount(loginid);
   };
@@ -1496,7 +1469,7 @@ export default function App() {
         username={userAccount.username}
         liveTradingEnabled={liveTradingEnabled}
         signalsOnly={signalsOnly}
-        onToggleLiveTrading={handleToggleLiveTrading}
+        strategyOnly={strategyOnly}
         liveAccounts={liveAccounts}
         activeLiveAccount={activeLiveAccount}
         onSwitchLiveAccount={handleSwitchLiveAccount}
@@ -1621,8 +1594,33 @@ export default function App() {
           />
         )}
 
+        {/* STRATEGY BOT ONLY MODE (embedded in the main site's Strategy Bot tab) */}
+        {strategyOnly && (
+          <BotStrategyPanel
+            config={chartsBotConfig}
+            onUpdateConfig={handleUpdateChartsBotConfig}
+            digitStats={digitStats}
+            currentDigit={currentTick?.lastDigit}
+            isRunning={chartsBotRunning}
+            isPaused={chartsBotPaused}
+            onStart={handleStartChartsBot}
+            onStop={handleStopChartsBot}
+            onPause={handlePauseChartsBot}
+            onResume={handleResumeChartsBot}
+            metrics={chartsBotMetrics}
+            trades={trades.filter((t) => t.botSource === 'charts')}
+            onResetStats={handleResetChartsBotStats}
+            onResetAfterTrade={handleResetChartsBotAfterTrade}
+            balance={userAccount.balance}
+            selectedMarketId={selectedMarket.id}
+            storageKey="tickedge_charts_bot_strategy"
+            tag="Strategy Bot"
+            theme={theme}
+          />
+        )}
+
         {/* BOTS TAB */}
-        {activeTab === 'bots' && (
+        {!strategyOnly && activeTab === 'bots' && (
           <>
             {/* Sub-navigation to switch between Normal Bot, Strategy Bot, Entry Bot, and EvenOdd Bot */}
             <div className="flex flex-wrap items-center justify-between gap-2 p-1.5 rounded-2xl border bg-white border-neutral-300 shadow-sm transition-colors">
@@ -1871,7 +1869,7 @@ export default function App() {
       </main>
  
       {/* Floating Bot Controller across ALL Tabs */}
-      {!signalsOnly && (
+      {!signalsOnly && !strategyOnly && (
       <FloatingBotController
         selectedBot={floatingBotSelection}
         onSelectBot={(bot) => {
@@ -1940,7 +1938,7 @@ export default function App() {
       )}
 
       {/* Bottom Navigation with independent bot indicators */}
-      {!signalsOnly && (
+      {!signalsOnly && !strategyOnly && (
         <BottomNavigation
           activeTab={activeTab}
           onTabChange={setActiveTab}

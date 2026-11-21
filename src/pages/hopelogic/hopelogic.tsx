@@ -85,8 +85,13 @@ export default function HopeLogic({ view }: { view?: string } = {}) {
     const prefix = process.env.NEXT_PUBLIC_APP_BUILD === 'true' ? '/bot/preview' : '';
     const src = view ? `${prefix}/hopelogic.html?view=${encodeURIComponent(view)}` : `${prefix}/hopelogic.html`;
     const isSignals = view === 'signals';
-    return <section className='hopelogic' aria-label={isSignals ? 'Signals workspace' : 'HopeLogic workspace'}>
-        {!loaded && <div className='hopelogic__loading' role='status'>{failed ? (isSignals ? 'Signals could not load.' : 'HopeLogic could not load.') : (isSignals ? 'Loading signals…' : 'Loading HopeLogic…')}{failed && <button onClick={() => {setLoaded(false); setFailed(false); setRetry(value => value + 1);}}>Try again</button>}</div>}
-        <iframe key={retry} ref={frame} src={src} title={isSignals ? 'Live market signals and account trading' : 'HopeLogic market analysis and strategy workspace'} allow='fullscreen' />
+    const isStrategy = view === 'strategy';
+    const ariaLabel = isStrategy ? 'Strategy Bot workspace' : isSignals ? 'Signals workspace' : 'HopeLogic workspace';
+    const failedText = isStrategy ? 'Strategy Bot could not load.' : isSignals ? 'Signals could not load.' : 'HopeLogic could not load.';
+    const loadingText = isStrategy ? 'Loading Strategy Bot…' : isSignals ? 'Loading signals…' : 'Loading HopeLogic…';
+    const frameTitle = isStrategy ? 'Strategy bot trading on your Deriv account' : isSignals ? 'Live market signals and account trading' : 'HopeLogic market analysis and strategy workspace';
+    return <section className='hopelogic' aria-label={ariaLabel}>
+        {!loaded && <div className='hopelogic__loading' role='status'>{failed ? failedText : loadingText}{failed && <button onClick={() => {setLoaded(false); setFailed(false); setRetry(value => value + 1);}}>Try again</button>}</div>}
+        <iframe key={retry} ref={frame} src={src} title={frameTitle} allow='fullscreen' />
     </section>;
 }
