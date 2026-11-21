@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import {
    BotMetrics,
+  DigitStat,
   Market,
   NormalBotConfig,
   SignalEntryTrigger,
+  Trade,
   TradeContractType,
 } from '../types';
 import {
@@ -16,8 +18,10 @@ import {
   formatWindowDuration,
   formatTradingViewCountdown,
 } from '../services/signalScannerEngine';
-import { Square, RotateCcw, ArrowUpRight, TrendingUp, Clock, Play, CheckCircle2, Bot, Activity, Zap, Search, X } from 'lucide-react';
+import { ActiveContract } from '../services/normalBotEngine';
+import { Square, RotateCcw, ArrowUpRight, TrendingUp, Clock, Play, CheckCircle2, Bot, Activity, Zap, Search, X, ChevronDown } from 'lucide-react';
 import { NumericInput } from './NumericInput';
+import { NormalBotPanel } from './NormalBotPanel';
 
 
 export interface SignalExecutionRequest {
@@ -73,6 +77,20 @@ interface SignalsViewProps {
   normalBotMetrics: BotMetrics;
   activeSignal: ActiveSignalSession | null;
   theme?: 'dark' | 'light';
+  // Embedded Normal Bot panel: when trades are provided the run buttons stay
+  // visibly connected to the Normal Bot they launch, with its full controls.
+  normalBotPaused?: boolean;
+  normalBotCurrentStep?: number;
+  normalBotActiveContract?: ActiveContract | null;
+  normalBotTrades?: Trade[];
+  normalBotBalance?: number;
+  digitStats?: DigitStat[];
+  currentDigit?: number;
+  onStartNormalBot?: () => void;
+  onPauseNormalBot?: () => void;
+  onResumeNormalBot?: () => void;
+  onResetNormalBotStats?: () => void;
+  onResetNormalBotStake?: () => void;
 }
 
 const ScanningRing: React.FC<{ secondsLeft: number; totalSeconds?: number; size?: number }> = ({
@@ -212,6 +230,18 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
   normalBotMetrics,
   activeSignal,
   theme = 'dark',
+  normalBotPaused = false,
+  normalBotCurrentStep = 0,
+  normalBotActiveContract = null,
+  normalBotTrades,
+  normalBotBalance,
+  digitStats,
+  currentDigit,
+  onStartNormalBot,
+  onPauseNormalBot,
+  onResumeNormalBot,
+  onResetNormalBotStats,
+  onResetNormalBotStake,
 }) => {
   const [category, setCategory] = useState<SignalCategory>('even_odd');
   const [evenOddStrategyFilter, setEvenOddStrategyFilter] = useState<'all' | 'S1' | 'S2' | 'S3'>('all');
@@ -223,6 +253,26 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
   >('all');
   const [marketSearchQuery, setMarketSearchQuery] = useState<string>('');
   const [entryTimingModes, setEntryTimingModes] = useState<Record<string, 'user_click' | 'auto_momentum'>>({});
+
+  // Embedded Normal Bot panel: the run buttons launch this bot, so the panel
+  // opens automatically whenever the bot is armed, trading, or paused.
+  const isNormalBotPanelEmbedded = Array.isArray(normalBotTrades);
+  const [normalBotPanelOpen, setNormalBotPanelOpen] = useState(false);
+  const normalBotPanelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (normalBotRunning || normalBotPaused) {
+      setNormalBotPanelOpen(true);
+    }
+  }, [normalBotRunning, normalBotPaused]);
+
+  const openNormalBotPanel = () => {
+    setNormalBotPanelOpen(true);
+    setTimeout(() => {
+      normalBotPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
+  };
+
 
   const getEntryTimingMode = (marketId: string): 'user_click' | 'auto_momentum' => {
     return entryTimingModes[marketId] ?? 'user_click';
@@ -658,10 +708,10 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {onOpenNormalBotTab && (
+            {(onOpenNormalBotTab || isNormalBotPanelEmbedded) && (
               <button
                 type="button"
-                onClick={onOpenNormalBotTab}
+                onClick={onOpenNormalBotTab ?? openNormalBotPanel}
                 className="px-3 py-1.5 rounded-full bg-white hover:bg-sky-100 text-sky-800 border border-sky-300 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap"
               >
                 <span>Normal Bot</span>
@@ -1672,6 +1722,75 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
         })}
       </div>
     )}
+
+      {/* NORMAL BOT PANEL (embedded) — the bot every Run button launches and controls */}
+      {isNormalBotPanelEmbedded && (
+        <div ref={normalBotPanelRef} className="w-full flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setNormalBotPanelOpen((o) => !o)}
+            className={`w-full px-3.5 py-2.5 rounded-2xl border flex items-center justify-between gap-2 cursor-pointer transition-colors shadow-sm ${
+              normalBotRunning || normalBotPaused
+                ? 'bg-sky-50 border-sky-300 hover:bg-sky-100'
+                : 'bg-white border-slate-200 hover:bg-slate-50'
+            }`}
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <Bot className="w-4 h-4 text-sky-600 shrink-0" />
+              <span className="text-sm font-extrabold text-slate-900">Normal Bot</span>
+              <span
+                className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border whitespace-nowrap ${
+                  normalBotPaused
+                    ? 'bg-amber-50 text-amber-700 border-amber-300'
+                    : normalBotRunning
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
+                    : 'bg-slate-100 text-slate-600 border-slate-300'
+                }`}
+              >
+                {normalBotPaused ? 'Paused' : normalBotRunning ? (normalBotWaitingForEntry ? 'Waiting for entry' : 'Trading') : 'Idle'}
+              </span>
+              <span className="text-[10px] text-slate-500 truncate hidden sm:inline">
+                The bot launched by the Run buttons on these signal cards
+              </span>
+            </span>
+            <span className="flex items-center gap-2 shrink-0">
+              {normalBotMetrics.totalTrades > 0 && (
+                <span className="font-mono tabular-nums text-[11px] font-bold text-slate-700">
+                  {(normalBotMetrics.sessionProfit ?? normalBotMetrics.totalProfit) >= 0 ? '+' : '-'}$
+                  {Math.abs(normalBotMetrics.sessionProfit ?? normalBotMetrics.totalProfit).toFixed(2)} (
+                  {normalBotMetrics.wins}W/{normalBotMetrics.losses}L)
+                </span>
+              )}
+              <ChevronDown className={`w-4 h-4 text-slate-500 transition-transform ${normalBotPanelOpen ? 'rotate-180' : ''}`} />
+            </span>
+          </button>
+
+          {normalBotPanelOpen && (
+            <NormalBotPanel
+              config={normalBotConfig}
+              onUpdateConfig={onUpdateNormalBotConfig}
+              digitStats={digitStats}
+              currentDigit={currentDigit}
+              isRunning={normalBotRunning}
+              isPaused={normalBotPaused}
+              onStart={onStartNormalBot ?? (() => {})}
+              onStop={onStopNormalBot}
+              onPause={onPauseNormalBot ?? (() => {})}
+              onResume={onResumeNormalBot ?? (() => {})}
+              metrics={normalBotMetrics}
+              trades={normalBotTrades ?? []}
+              onResetStats={onResetNormalBotStats ?? (() => {})}
+              onResetStake={onResetNormalBotStake ?? (() => {})}
+              currentStake={normalBotStake}
+              currentStep={normalBotCurrentStep}
+              activeContract={normalBotActiveContract}
+              balance={normalBotBalance ?? 0}
+              tag="Normal Bot"
+              theme={theme}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 };

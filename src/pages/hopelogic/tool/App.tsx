@@ -1606,6 +1606,18 @@ export default function App() {
             normalBotMetrics={normalBotMetrics}
             activeSignal={activeSignal}
             theme={theme}
+            normalBotPaused={normalBotPaused}
+            normalBotCurrentStep={normalBotStep}
+            normalBotActiveContract={normalBotActiveContract}
+            normalBotTrades={trades.filter((t) => t.botSource === 'normal')}
+            normalBotBalance={userAccount.balance}
+            digitStats={digitStats}
+            currentDigit={currentTick?.lastDigit}
+            onStartNormalBot={handleStartNormalBot}
+            onPauseNormalBot={handlePauseNormalBot}
+            onResumeNormalBot={handleResumeNormalBot}
+            onResetNormalBotStats={handleResetNormalBotStats}
+            onResetNormalBotStake={handleResetNormalBotStake}
           />
         )}
 
