@@ -9,6 +9,7 @@ import {
 import { soundManager } from './soundEffects';
 import confetti from 'canvas-confetti';
 import { getMarketCandle1mSecondsLeft, formatTradingViewCountdown } from './signalScannerEngine';
+import { LiveTradeOutcome, LiveTradeService, makeExitTick } from './liveTrade';
 
 export interface ActiveContract {
   id: string;
@@ -70,6 +71,9 @@ export class NormalBotExecutor {
   private onEntryWaitListeners: Set<(waiting: boolean, statusText: string) => void> = new Set();
 
   private botSource: Trade['botSource'] = 'normal';
+  private liveTrade: LiveTradeService | null = null;
+  private livePendingContract: ActiveContract | null = null;
+  private lastSeenTick: Tick | null = null;
 
   constructor(
     config: NormalBotConfig,
@@ -137,6 +141,10 @@ export class NormalBotExecutor {
     return this.isPaused;
   }
 
+  public setLiveTrade(service: LiveTradeService | null) {
+    this.liveTrade = service;
+  }
+
   public getActiveContract(): ActiveContract | null {
     return this.activeContract;
   }
@@ -157,6 +165,7 @@ export class NormalBotExecutor {
     this.isRunning = true;
     this.isPaused = false;
     this.activeContract = null;
+    this.livePendingContract = null;
     this.postStartTicks = [];
     this.sessionProfit = 0;
     this.lastStopReason = '';
@@ -213,6 +222,7 @@ export class NormalBotExecutor {
     this.hasInitialEntryConfirmed = false;
     this.postStartTicks = [];
     this.activeContract = null;
+    this.livePendingContract = null;
     this.lastStopReason = reason || '';
     this.metrics = {
       ...this.metrics,
@@ -228,6 +238,7 @@ export class NormalBotExecutor {
   public resetStats() {
     this.trades = [];
     this.activeContract = null;
+    this.livePendingContract = null;
     this.postStartTicks = [];
     this.sessionProfit = 0;
     this.lastStopReason = '';
@@ -763,6 +774,7 @@ export class NormalBotExecutor {
   // Evaluates every incoming tick
   public evaluateTick(tick: Tick, allTicks: Tick[], currentMarketId: string) {
     if (!this.isRunning || this.isPaused) return;
+    this.lastSeenTick = tick;
 
     // Risk management: stop bot if market changed before entry was found
     if (
@@ -778,6 +790,11 @@ export class NormalBotExecutor {
 
     // Check Session Take Profit or Stop Loss
     if (this.checkTpSlAndStop()) {
+      return;
+    }
+
+    // Live contract in flight: Deriv resolves it server-side, wait for settlement
+    if (this.livePendingContract) {
       return;
     }
 
@@ -937,6 +954,65 @@ export class NormalBotExecutor {
       hasSkipTick,
     };
     this.notifyContractProgress({ ...this.activeContract });
+
+    // Live mode: buy a real Deriv contract; Deriv tracks the ticks server-side.
+    if (this.liveTrade?.isReady()) {
+      this.livePendingContract = this.activeContract;
+      void this.executeLiveContract(this.activeContract, this.config.marketId);
+      return;
+    }
+  }
+
+  private executeLiveContract(contract: ActiveContract, marketId: string) {
+    const liveTrade = this.liveTrade;
+    if (!liveTrade) return;
+    liveTrade
+      .execute({
+        symbol: this.config.marketId || marketId,
+        tradeType: contract.contractType,
+        prediction: contract.prediction,
+        duration: contract.duration,
+        durationUnit: contract.durationUnit,
+        stake: contract.stake,
+      })
+      .then((outcome) => {
+        this.livePendingContract = null;
+        this.activeContract = null;
+        this.notifyContractProgress(null);
+        if (!outcome.ok) {
+          if (this.isRunning) this.stop(`Live trade failed: ${outcome.error || 'unknown error'}`);
+          return;
+        }
+        if (!this.isRunning) return;
+        const exitTick = makeExitTick(
+          contract.entryTick,
+          outcome.exitSpot,
+          this.config.marketId || marketId,
+          this.lastSeenTick || contract.entryTick
+        );
+        this.finalizeTrade(
+          Boolean(outcome.won),
+          outcome.stake ?? contract.stake,
+          contract.entryTick,
+          exitTick,
+          marketId,
+          contract.contractType,
+          contract.prediction,
+          contract.duration,
+          outcome.profit,
+          outcome.balanceAfter
+        );
+        if (!this.isRunning || this.isPaused) return;
+        if (this.config.botSpeed === 'fast' || isContinuousDirectionalContract(contract.contractType)) {
+          this.openNewContract(exitTick, []);
+        }
+      })
+      .catch((error: Error) => {
+        this.livePendingContract = null;
+        this.activeContract = null;
+        this.notifyContractProgress(null);
+        if (this.isRunning) this.stop(`Live trade failed: ${error.message}`);
+      });
   }
 
   // Resolves multi-tick contract upon reaching final tick
@@ -1051,7 +1127,9 @@ export class NormalBotExecutor {
     marketId: string,
     executedContractType?: TradeContractType,
     executedPrediction?: number | string,
-    executedDurationTicks?: number
+    executedDurationTicks?: number,
+    realProfit?: number,
+    realBalance?: number
   ) {
     const contractType = executedContractType ?? this.config.contractType;
     const prediction = executedPrediction ?? this.config.prediction;
@@ -1060,9 +1138,10 @@ export class NormalBotExecutor {
       prediction,
       executedDurationTicks ?? this.config.duration
     );
-    const rawProfit = won ? stakeUsed * (payoutMultiplier - 1) : -stakeUsed;
+    const rawProfit =
+      realProfit !== undefined ? realProfit : won ? stakeUsed * (payoutMultiplier - 1) : -stakeUsed;
     const profit = Number(rawProfit.toFixed(2));
-    this.balance = Number((this.balance + profit).toFixed(2));
+    this.balance = Number((realBalance ?? this.balance + profit).toFixed(2));
 
     let predictionText: string;
     if (contractType === 'UNDER') {
@@ -1153,6 +1232,7 @@ export class NormalBotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: this.botSource,
+      mode: realProfit !== undefined ? 'live' : 'simulation',
     };
 
     this.trades.unshift(tradeRecord);

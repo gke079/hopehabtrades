@@ -2,6 +2,7 @@ import { BotMetrics, DigitStat, EvenOddBotConfig, Tick, Trade } from '../types';
 import { ActiveContract } from './normalBotEngine';
 import { soundManager } from './soundEffects';
 import confetti from 'canvas-confetti';
+import { LiveTradeService, makeExitTick } from './liveTrade';
 
 export interface EvenOddBotStateSnapshot {
   waitingForCondition: boolean;
@@ -46,6 +47,10 @@ export class EvenOddBotExecutor {
   private onPauseChangeListeners: Set<(isPaused: boolean) => void> = new Set();
   private onContractProgressListeners: Set<(activeContract: ActiveContract | null) => void> = new Set();
   private onStateChangeListeners: Set<(state: EvenOddBotStateSnapshot) => void> = new Set();
+
+  private liveTrade: LiveTradeService | null = null;
+  private livePendingContract: ActiveContract | null = null;
+  private lastSeenTick: Tick | null = null;
 
   constructor(config: EvenOddBotConfig, initialBalance: number = 10000) {
     this.config = { ...config };
@@ -135,6 +140,10 @@ export class EvenOddBotExecutor {
     return this.isPaused;
   }
 
+  public setLiveTrade(service: LiveTradeService | null) {
+    this.liveTrade = service;
+  }
+
   public getActiveContract(): ActiveContract | null {
     return this.activeContract;
   }
@@ -159,6 +168,7 @@ export class EvenOddBotExecutor {
     this.isRunning = true;
     this.isPaused = false;
     this.activeContract = null;
+    this.livePendingContract = null;
     this.resetConditionTracker();
     this.sessionProfit = 0;
     this.lastStopReason = '';
@@ -190,6 +200,7 @@ export class EvenOddBotExecutor {
     this.isRunning = false;
     this.isPaused = false;
     this.activeContract = null;
+    this.livePendingContract = null;
     this.resetConditionTracker();
     this.lastStopReason = reason || '';
     this.metrics.lastStopReason = this.lastStopReason || undefined;
@@ -202,6 +213,7 @@ export class EvenOddBotExecutor {
   public resetStats() {
     this.trades = [];
     this.activeContract = null;
+    this.livePendingContract = null;
     this.resetConditionTracker();
     this.sessionProfit = 0;
     this.lastStopReason = '';
@@ -318,8 +330,14 @@ export class EvenOddBotExecutor {
     currentMarketId: string
   ) {
     if (!this.isRunning || this.isPaused) return;
+    this.lastSeenTick = tick;
 
     if (this.checkTpSlAndStop()) return;
+
+    // Live contract in flight: Deriv resolves it server-side, wait for settlement
+    if (this.livePendingContract) {
+      return;
+    }
 
     // 1. Advance open contract if active
     if (this.activeContract) {
@@ -541,20 +559,66 @@ export class EvenOddBotExecutor {
     };
 
     this.notifyContractProgress({ ...this.activeContract });
+
+    // Live mode: buy a real Deriv contract; Deriv tracks the ticks server-side.
+    if (this.liveTrade?.isReady()) {
+      this.livePendingContract = this.activeContract;
+      void this.executeLiveContract(this.activeContract, this.config.marketId);
+      return;
+    }
   }
 
-  private resolveContract(exitTick: Tick, allTicks: Tick[], marketId: string) {
-    if (!this.activeContract) return;
-    const contract = this.activeContract;
-    this.activeContract = null;
-    this.notifyContractProgress(null);
+  private executeLiveContract(contract: ActiveContract, marketId: string) {
+    const liveTrade = this.liveTrade;
+    if (!liveTrade) return;
+    liveTrade
+      .execute({
+        symbol: this.config.marketId || marketId,
+        tradeType: contract.contractType,
+        duration: contract.duration,
+        durationUnit: contract.durationUnit,
+        stake: contract.stake,
+      })
+      .then((outcome) => {
+        this.livePendingContract = null;
+        this.activeContract = null;
+        this.notifyContractProgress(null);
+        if (!outcome.ok) {
+          if (this.isRunning) this.stop(`Live trade failed: ${outcome.error || 'unknown error'}`);
+          return;
+        }
+        if (!this.isRunning) return;
+        const exitTick = makeExitTick(
+          contract.entryTick,
+          outcome.exitSpot,
+          this.config.marketId || marketId,
+          this.lastSeenTick || contract.entryTick
+        );
+        this.applyEvenOddOutcome(contract, exitTick, marketId, Boolean(outcome.won), outcome.profit, outcome.balanceAfter);
+      })
+      .catch((error: Error) => {
+        this.livePendingContract = null;
+        this.activeContract = null;
+        this.notifyContractProgress(null);
+        if (this.isRunning) this.stop(`Live trade failed: ${error.message}`);
+      });
+  }
 
+  private applyEvenOddOutcome(
+    contract: ActiveContract,
+    exitTick: Tick,
+    marketId: string,
+    won: boolean,
+    realProfit?: number,
+    realBalance?: number
+  ) {
     const exitDigit = exitTick.lastDigit;
-    const won =
-      contract.contractType === 'EVEN' ? exitDigit % 2 === 0 : exitDigit % 2 !== 0;
     const payoutMultiplier = 1.95;
-    const profit = won ? contract.stake * (payoutMultiplier - 1) : -contract.stake;
-    this.balance = Number((this.balance + profit).toFixed(2));
+    const profit =
+      realProfit !== undefined
+        ? Number(realProfit.toFixed(2))
+        : Number((won ? contract.stake * (payoutMultiplier - 1) : -contract.stake).toFixed(2));
+    this.balance = Number((realBalance ?? this.balance + profit).toFixed(2));
     this.sessionProfit = Number((this.sessionProfit + profit).toFixed(2));
 
     if (won) {
@@ -625,6 +689,7 @@ export class EvenOddBotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: 'evenodd',
+      mode: realProfit !== undefined ? 'live' : 'simulation',
     };
 
     this.trades.unshift(tradeRecord);
@@ -645,5 +710,18 @@ export class EvenOddBotExecutor {
     } else if (this.config.botSpeed === 'fast') {
       this.openNewContract(exitTick);
     }
+  }
+
+  private resolveContract(exitTick: Tick, allTicks: Tick[], marketId: string) {
+    if (!this.activeContract) return;
+    const contract = this.activeContract;
+    this.activeContract = null;
+    this.notifyContractProgress(null);
+
+    const exitDigit = exitTick.lastDigit;
+    const won =
+      contract.contractType === 'EVEN' ? exitDigit % 2 === 0 : exitDigit % 2 !== 0;
+
+    this.applyEvenOddOutcome(contract, exitTick, marketId, won);
   }
 }
