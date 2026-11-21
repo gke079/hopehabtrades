@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChartNoAxesCombined, Radio, Bot, Blocks, History } from 'lucide-react';
+import { ChartNoAxesCombined, Bot, Blocks, History } from 'lucide-react';
 
 export type ActiveTab = 'digits' | 'signals' | 'bots' | 'builder' | 'history';
 
@@ -8,7 +8,6 @@ export interface BottomNavigationProps {
   onTabChange: (tab: ActiveTab) => void;
   botRunning?: boolean;
   digitsBotRunning?: boolean;
-  signalBotRunning?: boolean;
   chartsBotRunning?: boolean;
   xmlBotRunning?: boolean;
   theme?: 'dark' | 'light';
@@ -19,13 +18,11 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
   onTabChange,
   botRunning,
   digitsBotRunning,
-  signalBotRunning,
   chartsBotRunning,
   xmlBotRunning,
   theme,
 }) => {
   const isDigitsRunning = digitsBotRunning ?? botRunning ?? false;
-  const isSignalRunning = signalBotRunning ?? false;
   const isChartsRunning = chartsBotRunning ?? false;
   const isXmlRunning = xmlBotRunning ?? false;
   const isLight = theme === 'light';
@@ -61,32 +58,6 @@ export const BottomNavigation: React.FC<BottomNavigationProps> = ({
           </div>
           <span className="text-[11px] sm:text-xs tracking-tight">Analysis</span>
           {activeTab === 'digits' && (
-            <span className="w-5 h-0.5 rounded-full -mb-0.5 bg-slate-950" />
-          )}
-        </button>
-
-        {/* Signals Tab */}
-        <button
-          onClick={() => onTabChange('signals')}
-          className={`flex flex-col items-center gap-1 px-2.5 sm:px-4 py-1.5 rounded-xl transition-all relative whitespace-nowrap shrink-0 cursor-pointer ${
-            activeTab === 'signals'
-              ? 'text-slate-950 font-black bg-[#00FFFF] border border-[#00FFFF] shadow-[0_0_15px_rgba(0,255,255,0.5)] ring-2 ring-[#00FFFF]'
-              : isLight
-              ? 'text-neutral-500 hover:text-neutral-900 font-medium'
-              : 'text-neutral-400 hover:text-white font-medium'
-          }`}
-        >
-          <div className="relative">
-            <Radio className="w-5 h-5" />
-            {isSignalRunning && (
-              <>
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-emerald-500" />
-              </>
-            )}
-          </div>
-          <span className="text-[11px] sm:text-xs tracking-tight">Signals</span>
-          {activeTab === 'signals' && (
             <span className="w-5 h-0.5 rounded-full -mb-0.5 bg-slate-950" />
           )}
         </button>

@@ -65,7 +65,7 @@ interface SignalsViewProps {
   onRunSignalOnNormalBot: (req: SignalExecutionRequest) => void;
   onStopNormalBot: () => void;
   onResetNormalBot: () => void;
-  onOpenNormalBotTab: () => void;
+  onOpenNormalBotTab?: () => void;
   normalBotRunning: boolean;
   normalBotWaitingForEntry?: boolean;
   normalBotEntryStatus?: string;
@@ -658,14 +658,16 @@ export const SignalsView: React.FC<SignalsViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={onOpenNormalBotTab}
-              className="px-3 py-1.5 rounded-full bg-white hover:bg-sky-100 text-sky-800 border border-sky-300 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap"
-            >
-              <span>Normal Bot</span>
-              <ArrowUpRight className="w-3.5 h-3.5" />
-            </button>
+            {onOpenNormalBotTab && (
+              <button
+                type="button"
+                onClick={onOpenNormalBotTab}
+                className="px-3 py-1.5 rounded-full bg-white hover:bg-sky-100 text-sky-800 border border-sky-300 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap"
+              >
+                <span>Normal Bot</span>
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button
               type="button"
               onClick={onStopNormalBot}

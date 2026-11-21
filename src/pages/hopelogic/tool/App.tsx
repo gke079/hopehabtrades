@@ -52,6 +52,11 @@ import { FloatingBotController } from './components/FloatingBotController';
 import { Zap, Cpu, Crosshair, ArrowLeftRight, ShieldCheck } from 'lucide-react';
 
 export default function App() {
+  // Signals-only embed mode: when opened with ?view=signals the tool renders the
+  // signals workspace alone (used by the main site's Signal tab).
+  const signalsOnly =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('view') === 'signals';
   const [selectedMarket, setSelectedMarket] = useState<Market>(DEFAULT_MARKET);
   const [ticksWindow, setTicksWindow] = useState<number>(1000);
   const [ticks, setTicks] = useState<Tick[]>([]);
@@ -82,7 +87,7 @@ export default function App() {
   };
 
   // Tabs & Modals
-  const [activeTab, setActiveTab] = useState<ActiveTab>('digits');
+  const [activeTab, setActiveTab] = useState<ActiveTab>(signalsOnly ? 'signals' : 'digits');
   const [isApiModalOpen, setIsApiModalOpen] = useState<boolean>(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
@@ -492,6 +497,8 @@ export default function App() {
   const [liveTradingEnabled, setLiveTradingEnabled] = useState<boolean>(false);
   const liveTradingEnabledRef = useRef(false);
   liveTradingEnabledRef.current = liveTradingEnabled;
+  // null = follow account availability automatically; true/false = user's explicit choice
+  const liveModeUserPreference = useRef<boolean | null>(null);
 
   // Unified trades history
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -556,6 +563,16 @@ export default function App() {
     const unsubLiveAccounts = liveTrade.onAccounts((account, accounts) => {
       setLiveAccounts(accounts);
       setActiveLiveAccount(account);
+      // Trading defaults to the site's authorized Deriv account (real or demo)
+      // as soon as one is available — simulation is only the fallback when the
+      // visitor is not logged in, or after they explicitly pick simulation.
+      const wantsLive = liveModeUserPreference.current !== null
+        ? liveModeUserPreference.current
+        : Boolean(account);
+      if (liveTradingEnabledRef.current !== wantsLive) {
+        liveTrade.setEnabled(wantsLive);
+        setLiveTradingEnabled(wantsLive);
+      }
       if (account) {
         setUserAccount((prev) => ({
           ...prev,
@@ -1431,6 +1448,7 @@ export default function App() {
   // ==========================================
   const handleToggleLiveTrading = () => {
     if (liveTradingEnabled) {
+      liveModeUserPreference.current = false;
       liveTrade.setEnabled(false);
       setLiveTradingEnabled(false);
       return;
@@ -1443,6 +1461,7 @@ export default function App() {
         `Enable LIVE trading on your REAL account ${activeLiveAccount.loginid} (${activeLiveAccount.currency} ${activeLiveAccount.balance.toFixed(2)})?\n\nBots will place real contracts with real money using your account settings. Continue?`
       );
     if (!confirmed) return;
+    liveModeUserPreference.current = true;
     liveTrade.setEnabled(true);
     setLiveTradingEnabled(true);
   };
@@ -1476,6 +1495,7 @@ export default function App() {
         isLoggedIn={userAccount.isLoggedIn}
         username={userAccount.username}
         liveTradingEnabled={liveTradingEnabled}
+        signalsOnly={signalsOnly}
         onToggleLiveTrading={handleToggleLiveTrading}
         liveAccounts={liveAccounts}
         activeLiveAccount={activeLiveAccount}
@@ -1571,10 +1591,14 @@ export default function App() {
             onRunSignalOnNormalBot={handleRunSignalOnNormalBot}
             onStopNormalBot={handleStopNormalBot}
             onResetNormalBot={handleResetNormalBot}
-            onOpenNormalBotTab={() => {
-              setBotsTabSubView('normal');
-              setActiveTab('bots');
-            }}
+            onOpenNormalBotTab={
+              signalsOnly
+                ? undefined
+                : () => {
+                    setBotsTabSubView('normal');
+                    setActiveTab('bots');
+                  }
+            }
             normalBotRunning={normalBotRunning}
             normalBotWaitingForEntry={normalBotWaitingForEntry}
             normalBotEntryStatus={normalBotEntryStatus}
@@ -1835,6 +1859,7 @@ export default function App() {
       </main>
  
       {/* Floating Bot Controller across ALL Tabs */}
+      {!signalsOnly && (
       <FloatingBotController
         selectedBot={floatingBotSelection}
         onSelectBot={(bot) => {
@@ -1900,19 +1925,21 @@ export default function App() {
         currentMarketName={selectedMarket.symbol || selectedMarket.name}
         theme={theme}
       />
+      )}
 
       {/* Bottom Navigation with independent bot indicators */}
-      <BottomNavigation
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        digitsBotRunning={digitsBotRunning}
-        signalBotRunning={normalBotRunning && activeSignal !== null}
-        chartsBotRunning={
-          chartsBotRunning || normalBotRunning || entryBotRunning || evenOddBotRunning
-        }
-        xmlBotRunning={xmlBotRunning}
-        theme={theme}
-      />
+      {!signalsOnly && (
+        <BottomNavigation
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          digitsBotRunning={digitsBotRunning}
+          chartsBotRunning={
+            chartsBotRunning || normalBotRunning || entryBotRunning || evenOddBotRunning
+          }
+          xmlBotRunning={xmlBotRunning}
+          theme={theme}
+        />
+      )}
 
     </div>
   );

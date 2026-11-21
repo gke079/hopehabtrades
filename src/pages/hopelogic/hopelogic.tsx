@@ -14,7 +14,7 @@ const toAccountLite = (loginid: string, currency: string, balance: number): Trad
     is_virtual: /^VR/i.test(loginid),
 });
 
-export default function HopeLogic() {
+export default function HopeLogic({ view }: { view?: string } = {}) {
     const frame = useRef<HTMLIFrameElement>(null);
     const [loaded, setLoaded] = useState(false);
     const [retry, setRetry] = useState(0);
@@ -83,8 +83,10 @@ export default function HopeLogic() {
         return () => { clearInterval(timer); window.removeEventListener('message', receive); bridge?.dispose(); tradeBridge?.dispose(); };
     }, [retry]);
     const prefix = process.env.NEXT_PUBLIC_APP_BUILD === 'true' ? '/bot/preview' : '';
-    return <section className='hopelogic' aria-label='HopeLogic workspace'>
-        {!loaded && <div className='hopelogic__loading' role='status'>{failed ? 'HopeLogic could not load.' : 'Loading HopeLogic…'}{failed && <button onClick={() => {setLoaded(false); setFailed(false); setRetry(value => value + 1);}}>Try again</button>}</div>}
-        <iframe key={retry} ref={frame} src={`${prefix}/hopelogic.html`} title='HopeLogic market analysis and strategy workspace' allow='fullscreen' />
+    const src = view ? `${prefix}/hopelogic.html?view=${encodeURIComponent(view)}` : `${prefix}/hopelogic.html`;
+    const isSignals = view === 'signals';
+    return <section className='hopelogic' aria-label={isSignals ? 'Signals workspace' : 'HopeLogic workspace'}>
+        {!loaded && <div className='hopelogic__loading' role='status'>{failed ? (isSignals ? 'Signals could not load.' : 'HopeLogic could not load.') : (isSignals ? 'Loading signals…' : 'Loading HopeLogic…')}{failed && <button onClick={() => {setLoaded(false); setFailed(false); setRetry(value => value + 1);}}>Try again</button>}</div>}
+        <iframe key={retry} ref={frame} src={src} title={isSignals ? 'Live market signals and account trading' : 'HopeLogic market analysis and strategy workspace'} allow='fullscreen' />
     </section>;
 }
