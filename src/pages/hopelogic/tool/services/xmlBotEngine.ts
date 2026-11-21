@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { soundManager } from './soundEffects';
 import confetti from 'canvas-confetti';
+import { LiveTradeService, makeExitTick } from './liveTrade';
 
 interface ActiveXmlContract {
   id: string;
@@ -57,6 +58,10 @@ export class XmlBotExecutor {
     maxDrawdown: 0,
     peakBalance: 10000,
   };
+
+  private liveTrade: LiveTradeService | null = null;
+  private livePendingContract: ActiveXmlContract | null = null;
+  private lastSeenTick: Tick | null = null;
 
   private onTradeListeners = new Set<(trade: Trade, metrics: BotMetrics, balance: number) => void>();
   private onStatusListeners = new Set<(running: boolean, paused: boolean, stage: XmlBotStage) => void>();
@@ -121,6 +126,10 @@ export class XmlBotExecutor {
     return this.isPaused;
   }
 
+  public setLiveTrade(service: LiveTradeService | null) {
+    this.liveTrade = service;
+  }
+
   public getStage(): XmlBotStage {
     return this.stage;
   }
@@ -153,6 +162,7 @@ export class XmlBotExecutor {
     this.isRunning = true;
     this.isPaused = false;
     this.activeContract = null;
+    this.livePendingContract = null;
     this.entryConfirmed = false;
     this.sessionProfit = 0;
     this.lastStopReason = '';
@@ -190,6 +200,7 @@ export class XmlBotExecutor {
     this.isRunning = false;
     this.isPaused = false;
     this.activeContract = null;
+    this.livePendingContract = null;
     this.entryConfirmed = false;
     this.lastStopReason = reason;
     this.metrics.lastStopReason = reason;
@@ -202,6 +213,7 @@ export class XmlBotExecutor {
     this.trades = [];
     this.journal = [];
     this.activeContract = null;
+    this.livePendingContract = null;
     this.entryConfirmed = false;
     this.sessionProfit = 0;
     this.lastStopReason = '';
@@ -279,8 +291,14 @@ export class XmlBotExecutor {
 
   public evaluateTick(tick: Tick, allTicks: Tick[], activeMarketId: string) {
     if (!this.isRunning || this.isPaused) return;
+    this.lastSeenTick = tick;
 
     if (this.checkTpSlAndStop()) return;
+
+    // Live contract in flight: Deriv resolves it server-side, wait for settlement
+    if (this.livePendingContract) {
+      return;
+    }
 
     // 1. Check active contract (Stage 3: During Purchase)
     if (this.activeContract) {
@@ -450,6 +468,59 @@ export class XmlBotExecutor {
       } · Stake $${stakeToUse.toFixed(2)} @ ${tick.quoteFormatted} (Digit ${tick.lastDigit})`
     );
     this.notifyState();
+
+    // Live mode: buy a real Deriv contract; Deriv tracks the ticks server-side.
+    // Early sell-at-profit is a simulation-only feature and is skipped live.
+    if (this.liveTrade?.isReady()) {
+      this.livePendingContract = this.activeContract;
+      void this.executeLiveContract(this.activeContract, this.config.marketId);
+      return;
+    }
+  }
+
+  private executeLiveContract(contract: ActiveXmlContract, activeMarketId: string) {
+    const liveTrade = this.liveTrade;
+    if (!liveTrade) return;
+    liveTrade
+      .execute({
+        symbol: this.config.marketId || activeMarketId,
+        tradeType: contract.contractType,
+        prediction: contract.prediction,
+        duration: contract.duration,
+        durationUnit: contract.durationUnit,
+        stake: contract.stake,
+      })
+      .then((outcome) => {
+        this.livePendingContract = null;
+        this.activeContract = null;
+        if (!outcome.ok) {
+          if (this.isRunning) this.stop(`Live trade failed: ${outcome.error || 'unknown error'}`);
+          return;
+        }
+        if (!this.isRunning) return;
+        const exitTick = makeExitTick(
+          contract.entryTick,
+          outcome.exitSpot,
+          this.config.marketId || activeMarketId,
+          this.lastSeenTick || contract.entryTick
+        );
+        this.finalizeTrade(
+          Boolean(outcome.won),
+          outcome.stake ?? contract.stake,
+          contract.entryTick,
+          exitTick,
+          activeMarketId,
+          outcome.profit,
+          contract.contractType,
+          contract.prediction,
+          contract.duration
+        );
+      })
+      .catch((error: Error) => {
+        this.livePendingContract = null;
+        this.activeContract = null;
+        if (this.isRunning) this.stop(`Live trade failed: ${error.message}`);
+      });
   }
 
   private evaluateBeforePurchaseCondition(tick: Tick, allTicks: Tick[]): boolean {
@@ -748,6 +819,7 @@ export class XmlBotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: 'xml',
+      mode: overrideProfit !== undefined ? 'live' : 'simulation',
     };
 
     this.trades.unshift(tradeRecord);

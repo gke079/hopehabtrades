@@ -140,6 +140,8 @@ export interface Trade {
   status: 'won' | 'lost';
   balanceAfter: number;
   botSource?: 'digits' | 'charts' | 'normal' | 'entry' | 'evenodd' | 'xml' | 'signal';
+  mode?: 'live' | 'simulation';
+  contractId?: string;
 }
 
 export type BotSubTab = 'normal' | 'strategy' | 'entry' | 'evenodd';

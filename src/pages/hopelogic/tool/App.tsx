@@ -26,6 +26,7 @@ import { EvenOddBotExecutor } from './services/evenOddBotEngine';
 import { XmlBotExecutor } from './services/xmlBotEngine';
 import { DEFAULT_XML_BOT_CONFIG } from './services/derivXmlBridge';
 import { soundManager } from './services/soundEffects';
+import { LiveAccountInfo, LiveTradeService } from './services/liveTrade';
 
 import { Header } from './components/Header';
 import { MarketSelector } from './components/MarketSelector';
@@ -484,6 +485,14 @@ export default function App() {
   // Active Signal session running on Normal Bot (strictly scoped by category)
   const [activeSignal, setActiveSignal] = useState<ActiveSignalSession | null>(null);
 
+  // Live trading (real Deriv account via the site connection) vs simulation
+  const [liveTrade] = useState(() => new LiveTradeService());
+  const [liveAccounts, setLiveAccounts] = useState<LiveAccountInfo[]>([]);
+  const [activeLiveAccount, setActiveLiveAccount] = useState<LiveAccountInfo | null>(null);
+  const [liveTradingEnabled, setLiveTradingEnabled] = useState<boolean>(false);
+  const liveTradingEnabledRef = useRef(false);
+  liveTradingEnabledRef.current = liveTradingEnabled;
+
   // Unified trades history
   const [trades, setTrades] = useState<Trade[]>([]);
 
@@ -534,6 +543,31 @@ export default function App() {
     // Independent Deriv XML Bot Executor
     const xmlBot = new XmlBotExecutor(xmlBotConfig, userAccount.balance);
     xmlBotExecutorRef.current = xmlBot;
+
+    // Share the live-trade gateway (real Deriv account) with all executors
+    digitsBot.setLiveTrade(liveTrade);
+    chartsBot.setLiveTrade(liveTrade);
+    normalBot.setLiveTrade(liveTrade);
+    entryBot.setLiveTrade(liveTrade);
+    evenOddBot.setLiveTrade(liveTrade);
+    xmlBot.setLiveTrade(liveTrade);
+
+    // Live account discovery & balance sync from the site's Deriv connection
+    const unsubLiveAccounts = liveTrade.onAccounts((account, accounts) => {
+      setLiveAccounts(accounts);
+      setActiveLiveAccount(account);
+      if (account) {
+        setUserAccount((prev) => ({
+          ...prev,
+          isLoggedIn: true,
+          username: account.loginid,
+          balance: account.balance,
+          currency: account.currency,
+          isDemo: account.isVirtual,
+        }));
+        syncAllExecutorsBalance(account.balance);
+      }
+    });
 
     // Listen to Digits bot trades
     const unsubDigitsTrade = digitsBot.onTrade((trade, metrics, balance) => {
@@ -785,6 +819,7 @@ export default function App() {
       unsubLiveFeed();
       unsubAccount();
       unsubAuthError();
+      unsubLiveAccounts();
       unsubDigitsTrade();
       unsubDigitsStatus();
       unsubChartsTrade();
@@ -809,6 +844,7 @@ export default function App() {
       unsubXmlStatus();
       unsubXmlJournal();
       digitsBot.stop(); chartsBot.stop(); normalBot.stop(); entryBot.stop(); evenOddBot.stop(); xmlBot.stop();
+      liveTrade.destroy();
       engine.destroy();
     };
   }, []);
@@ -1390,6 +1426,31 @@ export default function App() {
     syncAllExecutorsBalance(amount);
   };
 
+  // ==========================================
+  // LIVE TRADING (REAL DERIV ACCOUNT) vs SIMULATION
+  // ==========================================
+  const handleToggleLiveTrading = () => {
+    if (liveTradingEnabled) {
+      liveTrade.setEnabled(false);
+      setLiveTradingEnabled(false);
+      return;
+    }
+    if (!activeLiveAccount) return;
+    const targetIsReal = !activeLiveAccount.isVirtual;
+    const confirmed =
+      !targetIsReal ||
+      window.confirm(
+        `Enable LIVE trading on your REAL account ${activeLiveAccount.loginid} (${activeLiveAccount.currency} ${activeLiveAccount.balance.toFixed(2)})?\n\nBots will place real contracts with real money using your account settings. Continue?`
+      );
+    if (!confirmed) return;
+    liveTrade.setEnabled(true);
+    setLiveTradingEnabled(true);
+  };
+
+  const handleSwitchLiveAccount = (loginid: string) => {
+    void liveTrade.switchAccount(loginid);
+  };
+
   // Compute stats on-the-fly from the ticks buffer based on past ticks (excluding the current tick)
   const pastTicks = useMemo(() => (ticks.length > 1 ? ticks.slice(0, -1) : ticks), [ticks]);
   const digitStats = useMemo(() => calculateDigitStats(pastTicks), [pastTicks]);
@@ -1414,6 +1475,11 @@ export default function App() {
         onToggleTheme={handleToggleTheme}
         isLoggedIn={userAccount.isLoggedIn}
         username={userAccount.username}
+        liveTradingEnabled={liveTradingEnabled}
+        onToggleLiveTrading={handleToggleLiveTrading}
+        liveAccounts={liveAccounts}
+        activeLiveAccount={activeLiveAccount}
+        onSwitchLiveAccount={handleSwitchLiveAccount}
       />
 
       {/* Main Content Area */}

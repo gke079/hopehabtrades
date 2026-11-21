@@ -9,6 +9,7 @@ import {
 } from '../types';
 import { soundManager } from './soundEffects';
 import confetti from 'canvas-confetti';
+import { LiveTradeOutcome, LiveTradeService, makeExitTick } from './liveTrade';
 
 interface PendingStrategyContract {
   entryTick: Tick;
@@ -61,6 +62,9 @@ export class BotExecutor {
   private onStatusChangeListeners: Set<(isRunning: boolean, reason?: string) => void> = new Set();
   private onPauseChangeListeners: Set<(isPaused: boolean) => void> = new Set();
   private pendingContract: PendingStrategyContract | null = null;
+  private liveTrade: LiveTradeService | null = null;
+  private livePendingContract: PendingStrategyContract | null = null;
+  private lastSeenTick: Tick | null = null;
 
   constructor(
     config: BotStrategyConfig,
@@ -145,6 +149,10 @@ export class BotExecutor {
     return this.isPaused;
   }
 
+  public setLiveTrade(service: LiveTradeService | null) {
+    this.liveTrade = service;
+  }
+
   public isWaitingForCondition(): boolean {
     return this.isRunning && !this.analysisTriggered;
   }
@@ -158,6 +166,7 @@ export class BotExecutor {
     this.isPaused = false;
     this.analysisTriggered = false;
     this.pendingContract = null;
+    this.livePendingContract = null;
     this.sessionProfit = 0;
     this.lastStopReason = '';
     this.metrics = {
@@ -178,6 +187,7 @@ export class BotExecutor {
     this.isPaused = false;
     this.analysisTriggered = false;
     this.pendingContract = null;
+    this.livePendingContract = null;
     this.lastStopReason = reason || '';
     this.metrics = {
       ...this.metrics,
@@ -203,6 +213,7 @@ export class BotExecutor {
   public resetStats() {
     this.trades = [];
     this.pendingContract = null;
+    this.livePendingContract = null;
     this.analysisTriggered = false;
     this.sessionProfit = 0;
     this.lastStopReason = '';
@@ -462,7 +473,7 @@ export class BotExecutor {
     return tradeType.replace('_', ' ');
   }
 
-  private openStrategyContract(entryTick: Tick): boolean {
+  private openStrategyContract(entryTick: Tick, marketId: string): boolean {
     if (!this.isRunning || this.isPaused) return false;
     if (this.checkTpSlAndStop()) return false;
 
@@ -501,7 +512,7 @@ export class BotExecutor {
     const durationSeconds = unit === 'm' ? duration * 60 : unit === 's' ? duration : 0;
     const endTime = durationSeconds > 0 ? nowMs + durationSeconds * 1000 : undefined;
 
-    this.pendingContract = {
+    const contract: PendingStrategyContract = {
       entryTick,
       stake: stakeToUse,
       duration,
@@ -520,7 +531,49 @@ export class BotExecutor {
       tradeType,
       predictionDigit,
     };
+
+    // Live mode: buy a real Deriv contract instead of resolving locally.
+    if (this.liveTrade?.isReady()) {
+      this.livePendingContract = contract;
+      void this.executeLiveContract(contract, marketId);
+      return true;
+    }
+
+    this.pendingContract = contract;
     return true;
+  }
+
+  private executeLiveContract(contract: PendingStrategyContract, marketId: string) {
+    const liveTrade = this.liveTrade;
+    if (!liveTrade) return;
+    liveTrade
+      .execute({
+        symbol: this.config.marketId || marketId,
+        tradeType: contract.tradeType,
+        prediction: contract.predictionDigit,
+        duration: contract.duration,
+        durationUnit: contract.durationUnit,
+        stake: contract.stake,
+      })
+      .then((outcome) => {
+        this.livePendingContract = null;
+        if (!outcome.ok) {
+          if (this.isRunning) this.stop(`Live trade failed: ${outcome.error || 'unknown error'}`);
+          return;
+        }
+        if (!this.isRunning) return;
+        const exitTick = makeExitTick(
+          contract.entryTick,
+          outcome.exitSpot,
+          this.config.marketId || marketId,
+          this.lastSeenTick || contract.entryTick
+        );
+        this.executeStrategyOutcome(exitTick, [], contract, marketId, outcome);
+      })
+      .catch((error: Error) => {
+        this.livePendingContract = null;
+        if (this.isRunning) this.stop(`Live trade failed: ${error.message}`);
+      });
   }
 
   public evaluateTick(
@@ -531,6 +584,7 @@ export class BotExecutor {
     marketId: string
   ) {
     if (!this.isRunning || this.isPaused) return;
+    this.lastSeenTick = tick;
 
     // Risk management: stop bot if market changed before entry was found
     if (marketId && marketId !== this.config.marketId && !this.analysisTriggered) {
@@ -539,6 +593,11 @@ export class BotExecutor {
     }
 
     if (this.checkTpSlAndStop()) {
+      return;
+    }
+
+    // Live contract in flight: Deriv resolves it server-side, wait for settlement
+    if (this.livePendingContract) {
       return;
     }
 
@@ -615,8 +674,8 @@ export class BotExecutor {
       (this.config.durationUnit || 't') === 't' &&
       Math.max(1, Math.round(this.config.duration || 1)) === 1;
 
-    if (isFastImmediateDigit) {
-      if (!this.openStrategyContract(allTicks.length > 1 ? allTicks[allTicks.length - 2] : tick)) {
+    if (isFastImmediateDigit && !this.liveTrade?.isReady()) {
+      if (!this.openStrategyContract(allTicks.length > 1 ? allTicks[allTicks.length - 2] : tick, marketId)) {
         return;
       }
       const contract = this.pendingContract!;
@@ -625,14 +684,15 @@ export class BotExecutor {
       return;
     }
 
-    this.openStrategyContract(tick);
+    this.openStrategyContract(tick, marketId);
   }
 
   private executeStrategyOutcome(
     tick: Tick,
     allTicks: Tick[],
     contract: PendingStrategyContract,
-    marketId: string
+    marketId: string,
+    realOutcome?: LiveTradeOutcome
   ) {
     const {
       entryTick,
@@ -747,9 +807,20 @@ export class BotExecutor {
         won = digit > predictionDigit;
     }
 
-    const rawProfit = won ? stakeToUse * (payoutMultiplier - 1) : -stakeToUse;
+    if (realOutcome) {
+      won = Boolean(realOutcome.won);
+    }
+
+    const rawProfit = realOutcome
+      ? Number(realOutcome.profit ?? 0)
+      : won
+      ? stakeToUse * (payoutMultiplier - 1)
+      : -stakeToUse;
     const profit = Number(rawProfit.toFixed(2));
-    this.balance = Number((this.balance + profit).toFixed(2));
+    this.balance = Number(
+      (realOutcome?.balanceAfter ?? this.balance + profit).toFixed(2)
+    );
+    const stakeUsed = Number(realOutcome?.stake ?? stakeToUse) || stakeToUse;
     const initialStake = Math.max(0.35, Number(this.config.initialStake) || 0.35);
 
     if (won) {
@@ -809,7 +880,7 @@ export class BotExecutor {
       strategyName: this.config.name,
       contractType: tradeType,
       prediction: predictionText,
-      stake: stakeToUse,
+      stake: stakeUsed,
       entryPrice: entryTick.quote,
       exitPrice: tick.quote,
       exitDigit: digit,
@@ -817,6 +888,8 @@ export class BotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: this.botSource,
+      mode: realOutcome ? 'live' : 'simulation',
+      contractId: realOutcome?.contractId ? String(realOutcome.contractId) : undefined,
     };
 
     this.trades.unshift(tradeRecord);
@@ -839,7 +912,7 @@ export class BotExecutor {
         (this.config.executionMode === 'continuous' && this.config.botSpeed === 'fast'))
     ) {
       if (isContinuousDirectionalContract(this.config.tradeType)) {
-        this.openStrategyContract(tick);
+        this.openStrategyContract(tick, marketId);
       }
     }
   }
