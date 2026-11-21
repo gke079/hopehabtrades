@@ -55,9 +55,9 @@ export class NormalBotExecutor {
     lastStopReason: '',
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   };
-  private balance: number = 10000;
+  private balance: number = 0;
   private isRunning: boolean = false;
   private isPaused: boolean = false;
   private hasInitialEntryConfirmed: boolean = false;
@@ -77,12 +77,12 @@ export class NormalBotExecutor {
 
   constructor(
     config: NormalBotConfig,
-    initialBalance: number = 10000,
+    initialBalance: number = 0,
     botSource: Trade['botSource'] = 'normal'
   ) {
     this.config = { ...config };
     this.currentStake = Math.max(0.35, Number(config.initialStake) || 0.35);
-    const safeBalance = initialBalance > 0 ? initialBalance : 10000;
+    const safeBalance = Math.max(0, initialBalance);
     this.balance = safeBalance;
     this.metrics.peakBalance = safeBalance;
     this.botSource = botSource;
@@ -158,10 +158,6 @@ export class NormalBotExecutor {
   }
 
   public start() {
-    if (this.balance <= 0 && this.metrics.totalTrades === 0) {
-      this.balance = 10000;
-      this.metrics.peakBalance = 10000;
-    }
     this.isRunning = true;
     this.isPaused = false;
     this.activeContract = null;
@@ -900,7 +896,11 @@ export class NormalBotExecutor {
       Number((this.currentStake || this.config.initialStake || 0.35).toFixed(2))
     );
     if (this.balance < 0.35) {
-      this.stop('Insufficient balance to place minimum stake ($0.35)');
+      this.stop(
+        this.liveTrade?.isReady()
+          ? 'Insufficient balance to place minimum stake ($0.35)'
+          : 'Live trading is not connected. Log in on the main site with your Deriv account to trade.'
+      );
       return;
     }
     const stakeToUse = Number(Math.min(this.balance, desiredStake).toFixed(2));
@@ -961,6 +961,8 @@ export class NormalBotExecutor {
       void this.executeLiveContract(this.activeContract, this.config.marketId);
       return;
     }
+    // Simulation removed: trades only go to the connected Deriv account.
+    this.stop('Live trading is not connected. Log in on the main site with your Deriv account to trade.');
   }
 
   private executeLiveContract(contract: ActiveContract, marketId: string) {
@@ -1232,7 +1234,7 @@ export class NormalBotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: this.botSource,
-      mode: realProfit !== undefined ? 'live' : 'simulation',
+      mode: 'live',
     };
 
     this.trades.unshift(tradeRecord);

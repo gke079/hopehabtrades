@@ -42,7 +42,7 @@ export class XmlBotExecutor {
   private stage: XmlBotStage = 'idle';
   private isRunning: boolean = false;
   private isPaused: boolean = false;
-  private balance: number = 10000;
+  private balance: number = 0;
   private sessionProfit: number = 0;
   private lastStopReason: string = '';
   private trades: Trade[] = [];
@@ -56,7 +56,7 @@ export class XmlBotExecutor {
     sessionProfit: 0,
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   };
 
   private liveTrade: LiveTradeService | null = null;
@@ -67,10 +67,10 @@ export class XmlBotExecutor {
   private onStatusListeners = new Set<(running: boolean, paused: boolean, stage: XmlBotStage) => void>();
   private onJournalListeners = new Set<(entries: XmlJournalEntry[]) => void>();
 
-  constructor(config: XmlBotConfig, initialBalance: number = 10000) {
+  constructor(config: XmlBotConfig, initialBalance: number = 0) {
     this.config = { ...config };
     this.currentStake = Math.max(0.35, Number(config.initialStake) || 0.35);
-    const safeBalance = initialBalance > 0 ? initialBalance : 10000;
+    const safeBalance = Math.max(0, initialBalance);
     this.balance = safeBalance;
     this.metrics.peakBalance = safeBalance;
   }
@@ -113,7 +113,7 @@ export class XmlBotExecutor {
 
   public setBalance(balance: number) {
     if (balance <= 0 && this.isRunning) return;
-    const safeBalance = balance > 0 ? balance : this.balance > 0 ? this.balance : 10000;
+    const safeBalance = balance > 0 ? balance : this.balance;
     this.balance = safeBalance;
     this.metrics.peakBalance = Math.max(this.metrics.peakBalance, safeBalance);
   }
@@ -155,10 +155,6 @@ export class XmlBotExecutor {
   }
 
   public start() {
-    if (this.balance <= 0) {
-      this.balance = 10000;
-      this.metrics.peakBalance = Math.max(this.metrics.peakBalance, 10000);
-    }
     this.isRunning = true;
     this.isPaused = false;
     this.activeContract = null;
@@ -403,17 +399,16 @@ export class XmlBotExecutor {
     if (!this.isRunning || this.isPaused) return;
     if (this.checkTpSlAndStop()) return;
 
-    if (this.balance <= 0 && this.metrics.totalTrades === 0) {
-      this.balance = 10000;
-      this.metrics.peakBalance = Math.max(this.metrics.peakBalance, 10000);
-    }
-
     const desiredStake = Math.max(
       0.35,
       Number((this.currentStake || this.config.initialStake || 0.35).toFixed(2))
     );
     if (this.balance < 0.35) {
-      this.stop('Insufficient balance to place stake');
+      this.stop(
+        this.liveTrade?.isReady()
+          ? 'Insufficient balance to place stake'
+          : 'Live trading is not connected. Log in on the main site with your Deriv account to trade.'
+      );
       return;
     }
     const stakeToUse = Number(Math.min(this.balance, desiredStake).toFixed(2));
@@ -470,12 +465,14 @@ export class XmlBotExecutor {
     this.notifyState();
 
     // Live mode: buy a real Deriv contract; Deriv tracks the ticks server-side.
-    // Early sell-at-profit is a simulation-only feature and is skipped live.
+    // Early sell-at-profit is skipped live (Deriv resolves the contract server-side).
     if (this.liveTrade?.isReady()) {
       this.livePendingContract = this.activeContract;
       void this.executeLiveContract(this.activeContract, this.config.marketId);
       return;
     }
+    // Simulation removed: trades only go to the connected Deriv account.
+    this.stop('Live trading is not connected. Log in on the main site with your Deriv account to trade.');
   }
 
   private executeLiveContract(contract: ActiveXmlContract, activeMarketId: string) {
@@ -819,7 +816,7 @@ export class XmlBotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: 'xml',
-      mode: overrideProfit !== undefined ? 'live' : 'simulation',
+      mode: 'live',
     };
 
     this.trades.unshift(tradeRecord);

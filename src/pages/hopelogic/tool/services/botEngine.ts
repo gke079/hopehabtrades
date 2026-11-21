@@ -50,9 +50,9 @@ export class BotExecutor {
     lastStopReason: '',
     currentStreak: { type: null, count: 0 },
     maxDrawdown: 0,
-    peakBalance: 10000,
+    peakBalance: 0,
   };
-  private balance: number = 10000;
+  private balance: number = 0;
   private isRunning: boolean = false;
   private isPaused: boolean = false;
   private analysisTriggered: boolean = false;
@@ -68,12 +68,12 @@ export class BotExecutor {
 
   constructor(
     config: BotStrategyConfig,
-    initialBalance: number = 10000,
+    initialBalance: number = 0,
     botSource: 'digits' | 'charts' = 'digits'
   ) {
     this.config = { ...config };
     this.currentStake = Math.max(0.35, Number(config.initialStake) || 0.35);
-    const safeBalance = initialBalance > 0 ? initialBalance : 10000;
+    const safeBalance = Math.max(0, initialBalance);
     this.balance = safeBalance;
     this.metrics.peakBalance = safeBalance;
     this.botSource = botSource;
@@ -158,10 +158,6 @@ export class BotExecutor {
   }
 
   public start() {
-    if (this.balance <= 0 && this.metrics.totalTrades === 0) {
-      this.balance = 10000;
-      this.metrics.peakBalance = 10000;
-    }
     this.isRunning = true;
     this.isPaused = false;
     this.analysisTriggered = false;
@@ -482,7 +478,11 @@ export class BotExecutor {
       Number((this.currentStake || this.config.initialStake || 0.35).toFixed(2))
     );
     if (this.balance < 0.35) {
-      this.stop('Insufficient balance to place minimum stake ($0.35)');
+      this.stop(
+        this.liveTrade?.isReady()
+          ? 'Insufficient balance to place minimum stake ($0.35)'
+          : 'Live trading is not connected. Log in on the main site with your Deriv account to trade.'
+      );
       return false;
     }
     const stakeToUse = Number(Math.min(this.balance, desiredStake).toFixed(2));
@@ -539,8 +539,9 @@ export class BotExecutor {
       return true;
     }
 
-    this.pendingContract = contract;
-    return true;
+    // Simulation removed: trades only go to the connected Deriv account.
+    this.stop('Live trading is not connected. Log in on the main site with your Deriv account to trade.');
+    return false;
   }
 
   private executeLiveContract(contract: PendingStrategyContract, marketId: string) {
@@ -667,23 +668,8 @@ export class BotExecutor {
       }
     }
 
-    // Fast 1-tick digit mode resolves immediately if prior tick exists; multi-tick & directional contracts open at current tick and resolve across live incoming ticks
-    const isFastImmediateDigit =
-      this.config.botSpeed === 'fast' &&
-      !isDirectionalContinuous &&
-      (this.config.durationUnit || 't') === 't' &&
-      Math.max(1, Math.round(this.config.duration || 1)) === 1;
-
-    if (isFastImmediateDigit && !this.liveTrade?.isReady()) {
-      if (!this.openStrategyContract(allTicks.length > 1 ? allTicks[allTicks.length - 2] : tick, marketId)) {
-        return;
-      }
-      const contract = this.pendingContract!;
-      this.pendingContract = null;
-      this.executeStrategyOutcome(tick, allTicks, contract, marketId);
-      return;
-    }
-
+    // Fast 1-tick digit mode: Deriv resolves the contract server-side, so it
+    // opens like any other contract and settles through the live-trade gateway.
     this.openStrategyContract(tick, marketId);
   }
 
@@ -888,7 +874,7 @@ export class BotExecutor {
       status: won ? 'won' : 'lost',
       balanceAfter: this.balance,
       botSource: this.botSource,
-      mode: realOutcome ? 'live' : 'simulation',
+      mode: 'live',
       contractId: realOutcome?.contractId ? String(realOutcome.contractId) : undefined,
     };
 
